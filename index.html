@@ -9,7 +9,7 @@ if(screen===1){to('Open camera',310,235,255,265,2);to('Pick up finished film',0,
 if(screen===2){to('Take picture and finish test roll',48,25,710,490,3);to('Shutter: finish test roll',760,155,150,230,3);to('Return to camera',755,0,170,145,1)}
 if(screen===3){to('Drop off film for processing',222,143,477,140,4);to('Return to camera',35,315,160,190,1)}
 if(screen===4){['Borderless prints','Normal prints','Slides'].forEach((l,i)=>spot(l,235,192+i*63,420,45,()=>{choices.clear();choices.add(i);show()},choices.has(i)));to('Submit film',187,382,520,74,5);to('Cancel drop-off',0,0,180,550,3)}
-if(screen===5){to('Complete drop-off and return to camera',187,382,520,74,1);to('Return to camera',187,65,520,317,1)}
+if(screen===5){to('Background: return to homepage',0,0,932,550,1)}
 if(screen===6){to('Open front envelope',230,40,702,460,7);to('Open another envelope',0,50,230,450,9);to('Return to camera',0,0,932,38,1)}
 if(screen===7||screen===9){to('Return to envelopes',0,0,110,550,6);to('Flip picture to see options',220,75,555,410,8);to('Next picture',775,0,157,550,screen===7?9:7);to('Previous picture',110,0,110,550,screen===7?9:7)}
 if(screen===8){to('Flip back to picture',285,80,520,110,7);['Share this picture','Order more prints','Crop or fix exposure'].forEach((l,i)=>spot(l,399,190+i*63,380,50,()=>{document.querySelector('#message').textContent=l+' — this action is a placeholder in the screen prototype.';document.querySelector('#notice').showModal()}));to('Return to envelopes',0,0,115,550,6);to('Flip back to picture',285,390,520,80,7)}
