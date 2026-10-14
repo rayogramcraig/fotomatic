@@ -33,7 +33,7 @@ function note(s){$('status').textContent=s}function safeColor(v){return typeof v
 function sourceUrl(src,base){try{return new URL(src,base).href.replace(/%7B/gi,'{').replace(/%7D/gi,'}')}catch{return src}}
 function absolutize(s,url){if(s.sprite){if(typeof s.sprite==='string')s.sprite=sourceUrl(s.sprite,url);else if(Array.isArray(s.sprite))s.sprite.forEach(o=>{if(o.url)o.url=sourceUrl(o.url,url)})}if(s.glyphs)s.glyphs=sourceUrl(s.glyphs,url).replace(/%7B/gi,'{').replace(/%7D/gi,'}');for(const src of Object.values(s.sources||{})){if(src.url)src.url=sourceUrl(src.url,url);if(src.tiles)src.tiles=src.tiles.map(u=>sourceUrl(u,url));if(src.data&&typeof src.data==='string')src.data=sourceUrl(src.data,url)}return s}
 function push(){if(!style)return;history.push(clone(style));if(history.length>25)history.shift();$('undo').disabled=false}
-function update(live=true){if(!style)return;style.name='Fotomatic · '+baseName; if(live&&map){try{map.setStyle(clone(style),{diff:true})}catch(e){console.warn(e);note('Style error; open JSON to repair')}}renderInspector();note(style.layers.length+' editable layers')}
+function update(live=true){if(!style)return;syncAreaBorders();style.name='Fotomatic · '+baseName; if(live&&map){try{map.setStyle(clone(style),{diff:true})}catch(e){console.warn(e);note('Style error; open JSON to repair')}}renderInspector();note(style.layers.length+' editable layers')}
 async function loadBase(name){if(loading)return;loading=true;note('Loading '+name+'…');$('loadDot').style.background='#e8a93a';try{const url=BASES[name],res=await fetch(url);if(!res.ok)throw new Error('HTTP '+res.status);let incoming=absolutize(await res.json(),url);if(!incoming.layers||!incoming.sources)throw new Error('Not a vector style');incoming.glyphs='https://fonts.openmaptiles.org/{fontstack}/{range}.pbf';baseName=name;original=clone(incoming);style=clone(incoming);history=[];currentPalette=null;
 style.glyphs='https://fonts.openmaptiles.org/{fontstack}/{range}.pbf';
 map.setStyle(clone(style));
@@ -58,7 +58,68 @@ if(value&&typeof value==='object'&&Array.isArray(value.stops)){const result=clon
 return value;
 }
 function adjustNumeric(prop,inputName,predicate,outputId,format,record=true){const f=parseFloat($(inputName).value);$(outputId).textContent=format(f);if(!style)return;if(record)push();const section=prop==='text-size'?'layout':'paint';for(const l of style.layers){if(!predicate(l))continue;const font=style.metadata?.['fotomatic:font'];const old=(prop==='text-size'?font?.sizeBaselines?.[l.id]:undefined)??original?.layers?.find(x=>x.id===l.id)?.[section]?.[prop]??(prop==='text-size'?16:undefined);if(old===undefined)continue;l[section]??={};l[section][prop]=scaleNumeric(old,f*(prop==='text-size'?(font?.sizeAdjustment||1):1))}update()}
-function renderInspector(){if(!style)return;const list=$('layers');const query=searchTerm.toLowerCase();const layers=style.layers.filter(l=>(activeType==='all'||l.type===activeType)&&(!query||l.id.toLowerCase().includes(query)||JSON.stringify(l.paint||{}).toLowerCase().includes(query)||JSON.stringify(l.layout||{}).toLowerCase().includes(query)));$('layerCount').textContent=layers.length+'/'+style.layers.length;list.innerHTML='';if(!layers.length){list.innerHTML='<p class="empty">No matching layers.</p>';return}for(const l of layers){const item=document.createElement('div');item.className='layer-item';const title=document.createElement('div');title.className='layer-title';const enabled=document.createElement('input');enabled.type='checkbox';enabled.checked=l.layout?.visibility!=='none';enabled.title='Toggle visibility';enabled.onchange=()=>{push();l.layout??={};l.layout.visibility=enabled.checked?'visible':'none';update(false);map.setLayoutProperty(l.id,'visibility',enabled.checked?'visible':'none')};const name=document.createElement('button');name.textContent=(openId===l.id?'▾ ':'▸ ')+l.id;name.onclick=()=>{openId=openId===l.id?null:l.id;renderInspector()};const type=document.createElement('span');type.className='type';type.textContent=l.type;title.append(enabled,name,type);item.append(title);if(openId===l.id){const detail=document.createElement('div');detail.className='layer-detail';const entries=[...Object.entries(l.paint||{}).map(([k,v])=>['paint',k,v]),...Object.entries(l.layout||{}).filter(([k])=>k!=='visibility').map(([k,v])=>['layout',k,v])];for(const [section,key,val] of entries){const p=document.createElement('div');p.className='prop';const head=document.createElement('div');head.className='prop-head';const label=document.createElement('label');label.textContent=section+' · '+key;const revert=document.createElement('button');revert.className='reset';revert.textContent='↶';revert.title='Restore original property';revert.onclick=()=>{push();const orig=original?.layers?.find(x=>x.id===l.id)?.[section];if(orig&&Object.prototype.hasOwnProperty.call(orig,key)){l[section]??={};l[section][key]=clone(orig[key])}else delete l[section][key];update()};head.append(label,revert);p.append(head);let input;
+
+// True-width borders use a companion line layer because fill-outline-color has no width control.
+const borderId=id=>'fotomatic-border-'+id;
+const borderFor=l=>l.metadata?.['fotomatic:border-for'];
+function borderLayer(fill){return style.layers.find(l=>borderFor(l)===fill.id)}
+function syncAreaBorders(){
+  for(const fill of [...style.layers]){
+    if(fill.type!=='fill'||borderFor(fill))continue;
+    const edge=borderLayer(fill);
+    if(!edge)continue;
+    edge.source=fill.source;
+    if(fill['source-layer']!==undefined)edge['source-layer']=fill['source-layer'];else delete edge['source-layer'];
+    if(fill.filter!==undefined)edge.filter=clone(fill.filter);else delete edge.filter;
+    for(const key of ['minzoom','maxzoom']){if(fill[key]!==undefined)edge[key]=fill[key];else delete edge[key]}
+    edge.layout??={};edge.layout.visibility=fill.layout?.visibility||'visible';
+    const i=style.layers.indexOf(fill),j=style.layers.indexOf(edge);
+    if(j!==i+1){style.layers.splice(j,1);style.layers.splice(style.layers.indexOf(fill)+1,0,edge)}
+  }
+}
+function changeAreaBorder(fill,field,value){
+  push();
+  let edge=borderLayer(fill);
+  if(field==='enabled'){
+    if(value&&!edge){
+      const base=typeof fill.paint?.['fill-outline-color']==='string'&&safeColor(fill.paint['fill-outline-color'])?fill.paint['fill-outline-color']:'#6ba2b4';
+      edge={id:borderId(fill.id),type:'line',source:fill.source,metadata:{'fotomatic:border-for':fill.id},layout:{visibility:fill.layout?.visibility||'visible'},paint:{'line-color':base,'line-width':2,'line-opacity':1}};
+      // Avoid name collisions with existing styles.
+      while(style.layers.some(l=>l.id===edge.id))edge.id+='-new';
+      style.layers.splice(style.layers.indexOf(fill)+1,0,edge);
+    }else if(!value&&edge)style.layers.splice(style.layers.indexOf(edge),1);
+  }else if(edge){edge.paint[field]=value}
+  update();
+}
+function areaBorderControls(fill){
+  const edge=borderLayer(fill),panel=document.createElement('div');panel.className='advanced';
+  panel.style.margin='8px 0 14px';
+  const heading=document.createElement('label');heading.className='toggle-row';heading.style.padding='2px 0 9px';
+  const title=document.createElement('span');title.textContent='Area border';
+  const toggle=document.createElement('input');toggle.type='checkbox';toggle.checked=!!edge;
+  toggle.onchange=()=>changeAreaBorder(fill,'enabled',toggle.checked);
+  heading.append(title,toggle);panel.append(heading);
+  if(edge){
+    const colorRow=document.createElement('div');colorRow.className='prop';
+    const colorLabel=document.createElement('label');colorLabel.textContent='Border color';colorLabel.style.margin='7px 0';
+    const wrap=document.createElement('div');wrap.className='color-input';
+    const color=document.createElement('input');color.type='color';
+    const hex=document.createElement('input');hex.type='text';hex.value=edge.paint['line-color'];color.value=safeColor(hex.value)?hex.value:'#6ba2b4';
+    color.oninput=()=>hex.value=color.value;
+    color.onchange=()=>changeAreaBorder(fill,'line-color',color.value);
+    hex.onchange=()=>{if(safeColor(hex.value))changeAreaBorder(fill,'line-color',hex.value);else{hex.value=edge.paint['line-color'];alert('Enter a six-digit hex color, e.g. #6ba2b4')}};
+    wrap.append(color,hex);colorRow.append(colorLabel,wrap);panel.append(colorRow);
+    const widthRow=document.createElement('div');widthRow.className='range-row';
+    const widthLabel=document.createElement('span');widthLabel.textContent='Border width';
+    const range=document.createElement('input');range.type='range';range.min='0';range.max='12';range.step='0.5';range.value=edge.paint['line-width'];
+    const output=document.createElement('output');output.textContent=range.value+' px';
+    range.oninput=()=>{output.textContent=range.value+' px';try{map.setPaintProperty(edge.id,'line-width',Number(range.value))}catch(e){console.warn(e)}};
+    range.onchange=()=>changeAreaBorder(fill,'line-width',Number(range.value));
+    widthRow.append(widthLabel,range,output);panel.append(widthRow);
+  }
+  return panel;
+}
+function renderInspector(){if(!style)return;const list=$('layers');const query=searchTerm.toLowerCase();const layers=style.layers.filter(l=>!borderFor(l)&&(activeType==='all'||l.type===activeType)&&(!query||l.id.toLowerCase().includes(query)||JSON.stringify(l.paint||{}).toLowerCase().includes(query)||JSON.stringify(l.layout||{}).toLowerCase().includes(query)));$('layerCount').textContent=layers.length+'/'+style.layers.filter(l=>!borderFor(l)).length;list.innerHTML='';if(!layers.length){list.innerHTML='<p class="empty">No matching layers.</p>';return}for(const l of layers){const item=document.createElement('div');item.className='layer-item';const title=document.createElement('div');title.className='layer-title';const enabled=document.createElement('input');enabled.type='checkbox';enabled.checked=l.layout?.visibility!=='none';enabled.title='Toggle visibility';enabled.onchange=()=>{push();l.layout??={};l.layout.visibility=enabled.checked?'visible':'none';update(false);map.setLayoutProperty(l.id,'visibility',enabled.checked?'visible':'none')};const name=document.createElement('button');name.textContent=(openId===l.id?'▾ ':'▸ ')+l.id;name.onclick=()=>{openId=openId===l.id?null:l.id;renderInspector()};const type=document.createElement('span');type.className='type';type.textContent=l.type;title.append(enabled,name,type);item.append(title);if(openId===l.id){const detail=document.createElement('div');detail.className='layer-detail';if(l.type==='fill')detail.append(areaBorderControls(l));const entries=[...Object.entries(l.paint||{}).map(([k,v])=>['paint',k,v]),...Object.entries(l.layout||{}).filter(([k])=>k!=='visibility').map(([k,v])=>['layout',k,v])];for(const [section,key,val] of entries){const p=document.createElement('div');p.className='prop';const head=document.createElement('div');head.className='prop-head';const label=document.createElement('label');label.textContent=section+' · '+key;const revert=document.createElement('button');revert.className='reset';revert.textContent='↶';revert.title='Restore original property';revert.onclick=()=>{push();const orig=original?.layers?.find(x=>x.id===l.id)?.[section];if(orig&&Object.prototype.hasOwnProperty.call(orig,key)){l[section]??={};l[section][key]=clone(orig[key])}else delete l[section][key];update()};head.append(label,revert);p.append(head);let input;
 if(safeColor(val)){const wrap=document.createElement('div');wrap.className='color-input';const color=document.createElement('input');color.type='color';color.value=val;input=document.createElement('input');input.type='text';input.value=val;color.oninput=()=>input.value=color.value;color.onchange=()=>commit(color.value);wrap.append(color,input);p.append(wrap)}else if(typeof val==='boolean'){input=document.createElement('select');for(const v of ['true','false']){const o=document.createElement('option');o.value=v;o.textContent=v;input.append(o)}input.value=String(val);p.append(input)}else if(typeof val==='number'){input=document.createElement('input');input.type='number';input.step='any';input.value=val;p.append(input)}else if(typeof val==='string'){input=document.createElement('input');input.type='text';input.value=val;p.append(input)}else{input=document.createElement('textarea');input.value=JSON.stringify(val,null,2);p.append(input)}function commit(raw){try{let value;if(typeof val==='number')value=Number(raw);else if(typeof val==='boolean')value=raw==='true';else if(Array.isArray(val)||val&&typeof val==='object')value=JSON.parse(raw);else value=raw;push();l[section][key]=value;try{if(section==='paint')map.setPaintProperty(l.id,key,value);else map.setLayoutProperty(l.id,key,value);note('Updated '+key)}catch(e){update();note('Validation error: '+e.message)}renderInspector()}catch(e){alert('Invalid JSON: '+e.message)}}input.onchange=()=>commit(input.value);detail.append(p)}const buttons=document.createElement('div');buttons.className='row';const b=document.createElement('button');b.className='btn';b.textContent='Edit full layer JSON';b.onclick=()=>showDialog('layer',l.id);const add=document.createElement('button');add.className='btn';add.textContent='+ Property';add.onclick=()=>{const key=prompt('Property name (e.g. line-opacity):');if(!key)return;const section=prompt('paint or layout?','paint');if(section!=='paint'&&section!=='layout')return;const v=prompt('JSON value (e.g. 0.5 or "#ff0000")','1');if(v===null)return;try{push();l[section]??={};l[section][key]=JSON.parse(v);update()}catch(e){alert('Invalid JSON')}};buttons.append(b,add);detail.append(buttons);item.append(detail)}list.append(item)}}
 function showDialog(mode,id){dialogMode=mode;const layer=style.layers.find(l=>l.id===id);$('dialogTitle').textContent=mode==='layer'?'Edit layer · '+id:mode==='import'?'Import style JSON':mode==='snippet'?'Integration snippet':'Edit complete style JSON';$('dialogHelp').textContent=mode==='import'?'Paste a MapLibre style JSON. Use a hosted style or this editor’s exported JSON.':mode==='snippet'?'Copy this into your web app. Host exported style.json at the specified path.':'JSON edits are validated when applied; unsupported expressions can still produce runtime style errors.';$('dialogText').value=mode==='layer'?JSON.stringify(layer,null,2):mode==='import'?'':mode==='snippet'?integrationSnippet():JSON.stringify(exportStyle(),null,2);$('dialogApply').style.display=mode==='snippet'?'none':'';$('dialogError').textContent='';$('dialogBackdrop').style.display='flex'}
 function exportStyle(){const s=clone(style);s.name='Fotomatic Custom';s.center=[+map.getCenter().lng.toFixed(6),+map.getCenter().lat.toFixed(6)];s.zoom=+map.getZoom().toFixed(2);return s}
